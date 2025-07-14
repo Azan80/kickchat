@@ -1,6 +1,6 @@
 'use client';
 
-import { Bluetooth, Loader2, Users, Wifi } from 'lucide-react';
+import { Bluetooth, Loader2, Users } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import BluetoothChatService, { ChatDevice } from '../lib/bluetooth';
 
@@ -24,7 +24,7 @@ export default function NearbyUsers({ selectedDevice, onDeviceSelect, onShowAllD
         // Set up listeners
         const handleConnection = (device: ChatDevice) => {
             setNearbyDevices(prev => prev.map(d =>
-                d.id === device.id ? { ...d, connected: true } : d
+                d.id === device.id ? { ...d, connected: true, isKickChatDevice: device.isKickChatDevice } : d
             ));
         };
 
@@ -121,37 +121,27 @@ export default function NearbyUsers({ selectedDevice, onDeviceSelect, onShowAllD
         }
     };
 
-    const formatLastScan = () => {
-        if (!lastScanTime) return 'Never';
-        const now = new Date();
-        const diff = Math.floor((now.getTime() - lastScanTime.getTime()) / 1000);
-        if (diff < 60) return 'Just now';
-        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-        return `${Math.floor(diff / 3600)}h ago`;
-    };
-
     const formatLastSeen = (device: ChatDevice) => {
         const now = new Date();
-        const diff = Math.floor((now.getTime() - device.lastSeen.getTime()) / 1000);
-        if (diff < 60) return 'Just now';
-        if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-        return `${Math.floor(diff / 3600)}h ago`;
+        const diff = now.getTime() - device.lastSeen.getTime();
+        const minutes = Math.floor(diff / (1000 * 60));
+
+        if (minutes < 1) return 'Just now';
+        if (minutes < 60) return `${minutes}m ago`;
+
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return `${hours}h ago`;
+
+        const days = Math.floor(hours / 24);
+        return `${days}d ago`;
     };
 
-    if (!bluetoothService.isBluetoothSupported()) {
-        return (
-            <div className="bg-white rounded-lg shadow-sm border p-4">
-                <h2 className="text-lg font-semibold mb-4 flex items-center">
-                    <Users className="mr-2" size={20} />
-                    Nearby Users
-                </h2>
-                <div className="text-center text-gray-500 py-4">
-                    <Wifi size={32} className="mx-auto mb-2 text-gray-300" />
-                    <p className="text-sm">Bluetooth not supported</p>
-                </div>
-            </div>
-        );
-    }
+    const getDeviceStatusText = (device: ChatDevice) => {
+        if (device.connected) {
+            return device.isKickChatDevice ? 'Connected (KickChat)' : 'Connected (Standard)';
+        }
+        return `Seen ${formatLastSeen(device)}`;
+    };
 
     return (
         <div className="bg-white rounded-lg shadow-sm border p-4">
@@ -173,65 +163,58 @@ export default function NearbyUsers({ selectedDevice, onDeviceSelect, onShowAllD
                 </div>
             </div>
 
-            <div className="space-y-2">
-                {nearbyDevices.length === 0 ? (
-                    <div className="text-center text-gray-500 py-6">
-                        <Bluetooth size={24} className="mx-auto mb-2 text-gray-300" />
-                        <p className="text-sm">No nearby users found</p>
-                        <p className="text-xs text-gray-400 mt-1">
-                            {isScanning ? 'Scanning...' : `Last scan: ${formatLastScan()}`}
-                        </p>
-                    </div>
-                ) : (
-                    <>
-                        <div className="text-xs text-gray-500 mb-2">
-                            {nearbyDevices.length} user{nearbyDevices.length !== 1 ? 's' : ''} nearby
-                            {!isScanning && (
-                                <span className="ml-1">• Last scan: {formatLastScan()}</span>
-                            )}
-                        </div>
-                        {nearbyDevices.slice(0, 5).map((device) => (
-                            <div
-                                key={device.id}
-                                className={`flex items-center justify-between p-2 rounded-lg border hover:bg-gray-50 cursor-pointer transition-colors ${selectedDevice?.id === device.id ? 'bg-blue-50 border-blue-200' : ''
-                                    }`}
-                                onClick={() => handleQuickConnect(device)}
-                            >
-                                <div className="flex items-center space-x-2">
-                                    <div className="p-1 bg-blue-100 rounded-full">
-                                        <Bluetooth size={14} className="text-blue-600" />
-                                    </div>
-                                    <div className="min-w-0 flex-1">
-                                        <p className="text-sm font-medium truncate">{device.name}</p>
-                                        <p className="text-xs text-gray-500">
-                                            {device.connected ? 'Connected' : `Seen ${formatLastSeen(device)}`}
-                                        </p>
-                                    </div>
+            {nearbyDevices.length === 0 ? (
+                <div className="text-center py-6 text-gray-500">
+                    <Bluetooth size={32} className="mx-auto mb-2 text-gray-300" />
+                    <p className="text-sm">No devices found</p>
+                    <p className="text-xs text-gray-400 mt-1">
+                        Scanning automatically every 15s
+                    </p>
+                </div>
+            ) : (
+                <div className="space-y-2">
+                    {nearbyDevices.slice(0, 5).map((device) => (
+                        <div
+                            key={device.id}
+                            className={`flex items-center justify-between p-2 rounded-lg border hover:bg-gray-50 cursor-pointer transition-colors ${selectedDevice?.id === device.id ? 'bg-blue-50 border-blue-200' : ''
+                                }`}
+                            onClick={() => handleQuickConnect(device)}
+                        >
+                            <div className="flex items-center space-x-2">
+                                <div className="p-1 bg-blue-100 rounded-full">
+                                    <Bluetooth size={14} className="text-blue-600" />
                                 </div>
-                                <div className="flex items-center space-x-1">
-                                    <div className={`w-2 h-2 rounded-full ${device.connected ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                                    {selectedDevice?.id === device.id && (
-                                        <span className="text-xs text-blue-600">Active</span>
+                                <div className="min-w-0 flex-1">
+                                    <p className="text-sm font-medium truncate">{device.name}</p>
+                                    <p className="text-xs text-gray-500">
+                                        {getDeviceStatusText(device)}
+                                    </p>
+                                    {device.isKickChatDevice !== undefined && (
+                                        <p className="text-xs text-gray-400">
+                                            {device.isKickChatDevice ? 'KickChat Device' : 'Standard BLE'}
+                                        </p>
                                     )}
                                 </div>
                             </div>
-                        ))}
-                        {nearbyDevices.length > 5 && (
+                            <div className="flex items-center space-x-1">
+                                <div className={`w-2 h-2 rounded-full ${device.connected ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                                {selectedDevice?.id === device.id && (
+                                    <span className="text-xs text-blue-600">Active</span>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+
+                    {nearbyDevices.length > 5 && (
+                        <div className="text-center pt-2">
                             <button
                                 onClick={onShowAllDevices}
-                                className="w-full text-center text-sm text-blue-500 hover:text-blue-700 py-2"
+                                className="text-xs text-blue-500 hover:text-blue-700"
                             >
-                                View {nearbyDevices.length - 5} more...
+                                +{nearbyDevices.length - 5} more devices
                             </button>
-                        )}
-                    </>
-                )}
-            </div>
-
-            {isScanning && (
-                <div className="mt-3 text-xs text-blue-600 flex items-center justify-center space-x-1">
-                    <Loader2 size={12} className="animate-spin" />
-                    <span>Scanning for nearby users...</span>
+                        </div>
+                    )}
                 </div>
             )}
         </div>
