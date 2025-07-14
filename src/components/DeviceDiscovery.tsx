@@ -131,9 +131,21 @@ export default function DeviceDiscovery({ onDeviceSelect, onClose }: DeviceDisco
                 console.error('Failed to connect to:', device.name);
                 setError(`Failed to connect to ${device.name}. Make sure the device is nearby and Bluetooth is enabled.`);
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error connecting to device:', error);
-            setError(`Failed to connect to ${device.name}. Please try again.`);
+
+            // Handle specific error types
+            if (error.message?.includes('Device not supported')) {
+                setError(`${device.name} is not supported for Bluetooth connections. Try a different device type.`);
+            } else if (error.message?.includes('Permission denied')) {
+                setError(`Permission denied. Please allow Bluetooth access and try again.`);
+            } else if (error.message?.includes('Device may be busy')) {
+                setError(`${device.name} may be busy or out of range. Try moving closer and disconnecting from other apps.`);
+            } else if (error.message?.includes('Device unavailable')) {
+                setError(`${device.name} is unavailable or already connected to another app. Try disconnecting it first.`);
+            } else {
+                setError(`Failed to connect to ${device.name}. Please try again.`);
+            }
         } finally {
             setConnectingDevice(null);
         }
