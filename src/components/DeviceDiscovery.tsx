@@ -86,18 +86,41 @@ export default function DeviceDiscovery({ onDeviceSelect, onClose }: DeviceDisco
 
         try {
             console.log('Starting device scan...');
-            const device = await bluetoothService.requestDevice();
-            if (device) {
-                setDevices(prev => {
-                    const existing = prev.find(d => d.id === device.id);
-                    if (existing) {
-                        return prev.map(d => d.id === device.id ? device : d);
+
+            // Try multiple scan attempts for better mobile device discovery
+            let deviceFound = false;
+            for (let attempt = 1; attempt <= 3; attempt++) {
+                console.log(`Scan attempt ${attempt}/3`);
+
+                try {
+                    const device = await bluetoothService.requestDevice();
+                    if (device) {
+                        setDevices(prev => {
+                            const existing = prev.find(d => d.id === device.id);
+                            if (existing) {
+                                return prev.map(d => d.id === device.id ? device : d);
+                            }
+                            return [...prev, device];
+                        });
+                        console.log('Device found:', device.name);
+                        deviceFound = true;
+
+                        // If we found a device, try one more scan
+                        if (attempt < 3) {
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                        }
                     }
-                    return [...prev, device];
-                });
-                console.log('Device found:', device.name);
-            } else {
-                console.log('No new devices found in this scan');
+                } catch (scanError: any) {
+                    console.log(`Scan attempt ${attempt} failed:`, scanError.message);
+                    if (attempt < 3) {
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    }
+                }
+            }
+
+            if (!deviceFound) {
+                console.log('No new devices found after 3 attempts');
+                setError('No devices found. Make sure both devices have Bluetooth enabled and are nearby.');
             }
         } catch (error: any) {
             // Don't show error if user just cancelled the dialog
@@ -213,6 +236,15 @@ export default function DeviceDiscovery({ onDeviceSelect, onClose }: DeviceDisco
                                     )}
                                     <span>{isScanning ? 'Scanning...' : 'Scan for Devices'}</span>
                                 </button>
+                                <button
+                                    onClick={() => {
+                                        setDevices([]);
+                                        bluetoothService.cleanupOldDevices();
+                                    }}
+                                    className="px-3 py-2 text-sm text-gray-600 hover:text-gray-800 border rounded-lg hover:bg-gray-50"
+                                >
+                                    Clear List
+                                </button>
                                 <label className="flex items-center space-x-2">
                                     <input
                                         type="checkbox"
@@ -238,6 +270,8 @@ export default function DeviceDiscovery({ onDeviceSelect, onClose }: DeviceDisco
                             <p>• Make sure both devices have Bluetooth enabled</p>
                             <p>• Devices should be within 10-30 meters of each other</p>
                             <p>• Both devices need to have KickChat open for full functionality</p>
+                            <p>• For mobile devices: Keep the app open and screen active</p>
+                            <p>• Try scanning multiple times if devices don't appear</p>
                         </div>
                     </div>
 

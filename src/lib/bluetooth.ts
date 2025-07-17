@@ -97,85 +97,33 @@ class BluetoothChatService {
     this.scanStartTime = new Date();
 
     try {
-      // Request device with more specific filters to avoid unsupported devices
-      const device = await (navigator as any).bluetooth.requestDevice({
-        filters: [
-          // Look for devices with standard services
-          { services: [this.GENERIC_ACCESS_SERVICE] },
-          { services: [this.GENERIC_ATTRIBUTE_SERVICE] },
-          { services: [this.KICKCHAT_SERVICE_UUID] },
-          // Common device types
-          { services: ['battery_service'] },
-          { services: ['device_information'] },
-        ],
-        optionalServices: [
-          this.GENERIC_ACCESS_SERVICE,
-          this.GENERIC_ATTRIBUTE_SERVICE,
-          this.KICKCHAT_SERVICE_UUID,
-          'battery_service',
-          'device_information'
-        ]
-      });
-
-      // Check if this device already exists
-      const existingDevice = this.devices.get(device.id);
-      if (existingDevice) {
-        return this.updateExistingDevice(existingDevice, device);
-      }
-
-      // Generate device name
-      const deviceName = await this.generateDeviceName(device);
-
-      const chatDevice: ChatDevice = {
-        id: device.id,
-        name: deviceName,
-        connected: false,
-        lastSeen: new Date(),
-        device: device,
-        isKickChatDevice: false // Will be determined during connection
-      };
-
-      this.devices.set(device.id, chatDevice);
+      console.log('Starting device discovery...');
       
-      // Notify listeners about the new device
-      this.deviceFoundCallbacks.forEach(cb => cb(chatDevice));
-      
-      return chatDevice;
-    } catch (error: any) {
-      console.error('Error requesting device:', error);
-      
-      // If the filtered approach fails, try the fallback approach
-      if (error.message?.includes('no services found')) {
-        console.log('Retrying with acceptAllDevices approach...');
-        return this.requestDeviceFallback();
-      }
-      
-      return null;
-    } finally {
-      this.isScanning = false;
-    }
-  }
-
-  private async requestDeviceFallback(): Promise<ChatDevice | null> {
-    try {
-      // Fallback approach for broader device discovery
+      // Use a simpler approach that works better for mobile devices
       const device = await (navigator as any).bluetooth.requestDevice({
         acceptAllDevices: true,
         optionalServices: [
-          this.GENERIC_ACCESS_SERVICE,
-          this.GENERIC_ATTRIBUTE_SERVICE,
+          // Standard BLE services that most devices support
+          0x1800, // Generic Access
+          0x1801, // Generic Attribute
+          0x180F, // Battery Service
+          0x180A, // Device Information
+          // Our custom service
           this.KICKCHAT_SERVICE_UUID
         ]
       });
 
+      console.log('Device selected:', device.name || 'Unknown device');
+
       // Check if this device already exists
       const existingDevice = this.devices.get(device.id);
       if (existingDevice) {
+        console.log('Device already exists, updating...');
         return this.updateExistingDevice(existingDevice, device);
       }
 
       // Generate device name
-      const deviceName = await this.generateDeviceName(device);
+      const deviceName = this.generateDeviceNameSimple(device);
 
       const chatDevice: ChatDevice = {
         id: device.id,
@@ -187,50 +135,33 @@ class BluetoothChatService {
       };
 
       this.devices.set(device.id, chatDevice);
+      
+      // Notify listeners about the new device
       this.deviceFoundCallbacks.forEach(cb => cb(chatDevice));
       
+      console.log('Device added to list:', deviceName);
       return chatDevice;
-    } catch (error) {
-      console.error('Fallback device request also failed:', error);
+    } catch (error: any) {
+      console.error('Error requesting device:', error);
+      
+      // Don't show error if user just cancelled
+      if (error.message && !error.message.includes('User cancelled')) {
+        console.error('Device discovery failed:', error.message);
+      }
+      
       return null;
+    } finally {
+      this.isScanning = false;
     }
   }
 
-  private updateExistingDevice(existingDevice: ChatDevice, newDevice: any): ChatDevice {
-    existingDevice.device = newDevice;
-    existingDevice.lastSeen = new Date();
-    
-    // Notify listeners about the updated device
-    this.deviceFoundCallbacks.forEach(cb => cb(existingDevice));
-    
-    return existingDevice;
-  }
-
-  private async generateDeviceName(device: any): Promise<string> {
+  private generateDeviceNameSimple(device: any): string {
     // Try to get the device name first
     if (device.name && device.name.trim()) {
-      console.log('Using device name:', device.name.trim());
       return device.name.trim();
     }
 
-    // Try to get device name from GATT services
-    try {
-      if (device.gatt) {
-        const server = await device.gatt.connect();
-        const service = await server.getPrimaryService(this.GENERIC_ACCESS_SERVICE);
-        const characteristic = await service.getCharacteristic(this.DEVICE_NAME_CHARACTERISTIC);
-        const value = await characteristic.readValue();
-        const name = new TextDecoder().decode(value);
-        if (name && name.trim()) {
-          return name.trim();
-        }
-      }
-    } catch (error) {
-      // Device might not support Generic Access service
-      console.log('Could not get device name from GATT:', error);
-    }
-
-    // Generate fallback name
+    // Generate a simple fallback name
     let fallbackName = 'Unknown Device';
     
     if (device.id) {
@@ -249,9 +180,17 @@ class BluetoothChatService {
       minute: '2-digit' 
     });
     
-    const finalName = `${fallbackName} (${timestamp})`;
-    console.log('Generated fallback name:', finalName, 'for device:', device.id);
-    return finalName;
+    return `${fallbackName} (${timestamp})`;
+  }
+
+  private updateExistingDevice(existingDevice: ChatDevice, newDevice: any): ChatDevice {
+    existingDevice.device = newDevice;
+    existingDevice.lastSeen = new Date();
+    
+    // Notify listeners about the updated device
+    this.deviceFoundCallbacks.forEach(cb => cb(existingDevice));
+    
+    return existingDevice;
   }
 
   async connectToDevice(deviceId: string): Promise<boolean> {
@@ -264,20 +203,13 @@ class BluetoothChatService {
     try {
       console.log('Attempting to connect to device:', chatDevice.name);
       
-      // Check if device supports GATT
+      // Quick connection test for mobile devices
       if (!chatDevice.device.gatt) {
         console.error('Device does not support GATT');
         throw new Error('Device does not support GATT connections');
       }
 
-      // Check if device is already connected
-      if (chatDevice.device.gatt.connected) {
-        console.log('Device already connected, using existing connection');
-        chatDevice.connected = true;
-        this.connectionCallbacks.forEach(cb => cb(chatDevice));
-        return true;
-      }
-
+      // For mobile devices, try a simpler connection approach
       console.log('Connecting to GATT server...');
       const server = await chatDevice.device.gatt.connect();
       if (!server) {
@@ -287,65 +219,11 @@ class BluetoothChatService {
 
       console.log('GATT server connected successfully');
 
-      // Try to get a better device name after connection
-      try {
-        const betterName = await this.getConnectedDeviceName(chatDevice.device);
-        if (betterName && betterName !== chatDevice.name) {
-          console.log(`Updating device name from "${chatDevice.name}" to "${betterName}"`);
-          chatDevice.name = betterName;
-        }
-      } catch (nameError) {
-        console.log('Could not get better device name:', nameError);
-      }
-
-      // Check if this is a KickChat device by looking for our custom service
-      let isKickChatDevice = false;
-      try {
-        console.log('Checking for KickChat service...');
-        const kickChatService = await server.getPrimaryService(this.KICKCHAT_SERVICE_UUID);
-        const kickChatCharacteristic = await kickChatService.getCharacteristic(this.KICKCHAT_CHARACTERISTIC_UUID);
-        
-        // Set up notifications for incoming messages
-        await kickChatCharacteristic.startNotifications();
-        kickChatCharacteristic.addEventListener('characteristicvaluechanged', (event: any) => {
-          const value = event.target.value;
-          if (value) {
-            const message = this.decodeMessage(value);
-            if (message) {
-              this.handleIncomingMessage(message);
-            }
-          }
-        });
-
-        chatDevice.service = kickChatService;
-        chatDevice.characteristic = kickChatCharacteristic;
-        isKickChatDevice = true;
-        console.log('Connected to KickChat device with custom service');
-      } catch (serviceError) {
-        console.log('Device does not have KickChat service, checking for standard services...');
-        
-        // Try to find any available services for basic compatibility
-        try {
-          const services = await server.getPrimaryServices();
-          console.log('Available services:', services.map((s: any) => s.uuid));
-          
-          if (services.length > 0) {
-            // Try to use the first available service for basic connectivity
-            chatDevice.service = services[0];
-            console.log('Using service:', services[0].uuid, 'for basic connectivity');
-          }
-          
-          isKickChatDevice = false;
-        } catch (servicesError) {
-          console.log('Could not enumerate services:', servicesError);
-          isKickChatDevice = false;
-        }
-      }
-
+      // Mark as connected immediately for mobile devices
       chatDevice.server = server;
       chatDevice.connected = true;
       chatDevice.lastSeen = new Date();
-      chatDevice.isKickChatDevice = isKickChatDevice;
+      chatDevice.isKickChatDevice = false; // Most mobile devices won't have our custom service
 
       // Handle disconnection
       chatDevice.device.addEventListener('gattserverdisconnected', () => {
@@ -355,26 +233,10 @@ class BluetoothChatService {
       });
 
       this.connectionCallbacks.forEach(cb => cb(chatDevice));
-      console.log('Successfully connected to device:', chatDevice.name, 'KickChat:', isKickChatDevice);
+      console.log('Successfully connected to device:', chatDevice.name);
       return true;
     } catch (error: any) {
       console.error('Error connecting to device:', error);
-      
-      // Provide more specific error messages
-      if (error.message?.includes('Unsupported device')) {
-        console.error('This device type is not supported for Bluetooth connections');
-        throw new Error('Device not supported: This device cannot establish Bluetooth connections');
-      } else if (error.message?.includes('GATT operation failed')) {
-        console.error('GATT operation failed - device may be busy or out of range');
-        throw new Error('Connection failed: Device may be busy or out of range');
-      } else if (error.message?.includes('Connection failed')) {
-        console.error('Connection failed - device may be unavailable');
-        throw new Error('Connection failed: Device unavailable or already connected to another app');
-      } else if (error.message?.includes('Permission denied')) {
-        console.error('Permission denied - user may have rejected the connection');
-        throw new Error('Permission denied: Please allow Bluetooth access');
-      }
-      
       throw error;
     }
   }
